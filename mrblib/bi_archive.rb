@@ -23,7 +23,6 @@ class Bi::Archive
   # fetch callback
   #
   def _on_success(archive)
-    puts "Bi::Archive _on_success"
     @on_success.call(archive)
   end
   def _on_progress(archive,transferred,length)
