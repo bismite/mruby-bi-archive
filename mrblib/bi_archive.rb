@@ -1,73 +1,62 @@
 
 class Bi::Archive
-  attr_accessor :on_success,:on_progress,:on_failed
+  attr_accessor :path, :secret
+  attr_accessor :callback,:on_progress
 
-  def self.fetch(name,&callback)
-    archive = Bi::Archive.new
-    archive.on_success = callback
-    archive.fetch name
-  end
-
-  # fetch
-  def fetch(name)
-    if self.respond_to? :_fetch
-      self._fetch name, :_on_success, :_on_progress, :_on_failed
+  #
+  def load(&callback)
+    if self.respond_to? :_download
+      self._download callback
     else
-      self._load name
-      @on_success.call(self)
+      _open if File.exis
+      callback.call(self)
     end
     return nil
   end
 
-  #
-  # fetch callback
-  #
-  def _on_success(archive)
-    @on_success.call(archive)
-  end
-  def _on_progress(archive,transferred,length)
-    @on_progress.call(archive,transferred,length) if @on_progress
-  end
-  def _on_failed(archive,status)
-    @on_failed.call(archive,status) if @on_failed
+  def available?
+    @available
   end
 
   #
   def filenames
-    unless @filenames
-      @filenames = @_table.map{|f| f.first }
-    end
-    @filenames
+    self.table.keys
   end
 
   #
   def table
     unless @table
       @table = {}
-      @_table.each{|f| @table[f.first] = f[1,2] }
+      if @_table
+        @_table.each{|f| @table[f.first] = f[1,2] }
+      end
     end
     @table
   end
 
   #
-  def read(name,secret)
+  def read(name)
+    return nil unless self.table.include? name
     start,length = table[name]
-    self._read_decrypt(secret,start,length)
+    self._read_decrypt start,length
   end
 
   # load texture image
-  def texture_image(name,antialias,secret)
+  def texture_image(name,antialias)
+    return nil unless self.table.include? name
     start,length = self.table[name]
-    self._texture_decrypt secret, start,length, antialias
+    self._texture_decrypt start,length,antialias
   end
 
   # load music
   def music(name,decrypt_secret)
+    return nil unless self.table.include? name
     Bi::Music.new self.read(name,decrypt_secret)
   end
 
   # load sound
   def sound(name,decrypt_secret)
+    return nil unless self.table.include? name
     Bi::Sound.new self.read(name,decrypt_secret)
   end
 
