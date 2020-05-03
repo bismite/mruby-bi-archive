@@ -37,10 +37,12 @@ static mrb_value mrb_archive_initialize(mrb_state *mrb, mrb_value self)
 {
   mrb_value path;
   mrb_int secret;
-  mrb_get_args(mrb, "Si", &path, &secret );
+  mrb_bool fallback = true;
+  mrb_get_args(mrb, "Si|b", &path, &secret, &fallback );
   mrb_iv_set(mrb, self, mrb_intern_cstr(mrb,"@path"), path );
   mrb_iv_set(mrb, self, mrb_intern_cstr(mrb,"@secret"), mrb_fixnum_value(secret) );
   mrb_iv_set(mrb, self, mrb_intern_cstr(mrb,"@available"), mrb_false_value() );
+  mrb_iv_set(mrb, self, mrb_intern_cstr(mrb,"@fallback"), mrb_bool_value(fallback) );
   mrb_archive* archive = mrb_malloc(mrb,sizeof(mrb_archive));
   DATA_PTR(self) = archive;
   DATA_TYPE(self) = &mrb_archive_data_type;
@@ -111,7 +113,7 @@ static void downloadSucceeded(struct emscripten_fetch_t *fetch)
   SDL_RWclose(io);
 
   mrb_iv_set(mrb, self, mrb_intern_cstr(mrb,"@available"), mrb_true_value() );
-  mrb_value callback = mrb_iv_get(mrb,self,"callback");
+  mrb_value callback = mrb_iv_get(mrb,self, mrb_intern_cstr(mrb,"@callback"));
   mrb_value argv[1] = { self };
   if( mrb_symbol_p(callback) ){
     mrb_funcall_argv(mrb,self,mrb_symbol(callback),1,argv);
@@ -132,7 +134,7 @@ static void downloadProgress(struct emscripten_fetch_t *fetch)
   int length = fetch->totalBytes==0 ? fetch->dataOffset + fetch->numBytes : fetch->totalBytes;
   int transferred = fetch->totalBytes==0 ? fetch->dataOffset + fetch->numBytes : fetch->dataOffset;
 
-  mrb_value callback = mrb_iv_get(mrb,self,"on_progress");
+  mrb_value callback = mrb_iv_get(mrb,self,mrb_intern_cstr(mrb,"@on_progress"));
   mrb_value argv[3] = {
     self,
     mrb_fixnum_value(transferred),
@@ -151,7 +153,7 @@ static void downloadFailed(struct emscripten_fetch_t *fetch)
   mrb_state *mrb = context->mrb;
   mrb_value self = context->archive;
 
-  mrb_value callback = mrb_iv_get(mrb,self,"callback");
+  mrb_value callback = mrb_iv_get(mrb,self,mrb_intern_cstr(mrb,"@callback"));
   mrb_value argv[2] = {
     self,
     mrb_fixnum_value(fetch->status),
@@ -171,7 +173,7 @@ static mrb_value mrb_archive_download(mrb_state *mrb, mrb_value self)
   mrb_value callback;
   mrb_value path;
   fetch_context *context;
-  mrb_get_args(mrb,"S",&callback);
+  mrb_get_args(mrb,"o",&callback);
 
   mrb_iv_set(mrb, self, mrb_intern_cstr(mrb,"@callback"), callback );
   context = malloc(sizeof(fetch_context));
@@ -203,7 +205,7 @@ static mrb_value mrb_archive_texture(mrb_state *mrb, mrb_value self)
   mrb_archive* archive;
   mrb_get_args(mrb, "iib", &start,&length,&antialias);
   archive = DATA_PTR(self);
-  return create_bi_texture_image_from_buffer( mrb, archive->buffer+start, length, antialias );
+  return create_bi_texture_from_buffer( mrb, archive->buffer+start, length, antialias );
 }
 
 static mrb_value mrb_archive_texture_decrypt(mrb_state *mrb, mrb_value self)
@@ -220,10 +222,10 @@ static mrb_value mrb_archive_texture_decrypt(mrb_state *mrb, mrb_value self)
     buf[i] = p[i] ^ secret;
   }
 
-  BiTextureImage img;
-  bi_create_texture( buf, length, &img, antialias );
+  BiTexture texture;
+  bi_create_texture( buf, length, &texture, antialias );
 
-  mrb_value result = create_bi_texture_image( mrb, &img );
+  mrb_value result = create_bi_texture( mrb, &texture );
 
   free(buf);
 
@@ -265,7 +267,7 @@ void mrb_mruby_bi_archive_gem_init(mrb_state* mrb)
   archive = mrb_define_class_under(mrb, bi, "Archive", mrb->object_class);
   MRB_SET_INSTANCE_TT(archive, MRB_TT_DATA);
 
-  mrb_define_method(mrb, archive, "initialize", mrb_archive_initialize, MRB_ARGS_REQ(2)); // path,secret
+  mrb_define_method(mrb, archive, "initialize", mrb_archive_initialize, MRB_ARGS_ANY() ); // path,secret,(fallback)
 
   mrb_define_method(mrb, archive, "_open", mrb_archive_open, MRB_ARGS_NONE());
 

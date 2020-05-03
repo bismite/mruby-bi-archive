@@ -8,8 +8,9 @@ class Bi::Archive
     if self.respond_to? :_download
       self._download callback
     else
-      _open if File.exis
-      callback.call(self)
+      _open if File.exists?(self.path)
+      @available = true
+      callback.call(self) if callback
     end
     return nil
   end
@@ -36,28 +37,40 @@ class Bi::Archive
 
   #
   def read(name)
-    return nil unless self.table.include? name
-    start,length = table[name]
-    self._read_decrypt start,length
+    if self.table.include?(name)
+      start,length = table[name]
+      self._read_decrypt start,length
+    elsif @fallback & File.file?(name)
+      File.open(name).read
+    end
   end
 
   # load texture image
-  def texture_image(name,antialias)
-    return nil unless self.table.include? name
-    start,length = self.table[name]
-    self._texture_decrypt start,length,antialias
+  def texture(name,antialias=false)
+    if self.table.include?(name)
+      start,length = self.table[name]
+      self._texture_decrypt start,length,antialias
+    elsif @fallback & File.file?(name)
+      Bi::Texture.new name, antialias
+    end
   end
 
   # load music
-  def music(name,decrypt_secret)
-    return nil unless self.table.include? name
-    Bi::Music.new self.read(name,decrypt_secret)
+  def music(name)
+    if self.table.include?(name)
+      Bi::Music.new self.read(name)
+    elsif @fallback & File.file?(name)
+      Bi::Music.new File.open(name).read()
+    end
   end
 
   # load sound
-  def sound(name,decrypt_secret)
-    return nil unless self.table.include? name
-    Bi::Sound.new self.read(name,decrypt_secret)
+  def sound(name)
+    if self.table.include?(name)
+      Bi::Sound.new self.read(name)
+    elsif @fallback & File.file?(name)
+      Bi::Sound.new File.open(name).read
+    end
   end
 
 end
