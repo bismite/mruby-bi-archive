@@ -13,7 +13,7 @@
 #include <stdlib.h>
 
 #ifdef EMSCRIPTEN
-#include <emscripten/fetch.h>
+#include <emscripten.h>
 #endif
 
 //
@@ -102,13 +102,13 @@ typedef struct {
   mrb_value archive;
 } fetch_context;
 
-static void downloadSucceeded(struct emscripten_fetch_t *fetch)
+static void onload(unsigned int handle, void* _context, void* data, unsigned int size)
 {
-  fetch_context* context = (fetch_context*)fetch->userData;
+  fetch_context* context = (fetch_context*)_context;
   mrb_state *mrb = context->mrb;
   mrb_value self = context->archive;
 
-  SDL_RWops* io = SDL_RWFromConstMem(fetch->data,fetch->numBytes);
+  SDL_RWops* io = SDL_RWFromConstMem(data,size);
   read_from_rwops(mrb,self,io);
   SDL_RWclose(io);
 
@@ -122,23 +122,19 @@ static void downloadSucceeded(struct emscripten_fetch_t *fetch)
   }
 
   free(context);
-  emscripten_fetch_close(fetch);
 }
 
-static void downloadProgress(struct emscripten_fetch_t *fetch)
+static void onprogress(unsigned int handle, void *_context, int loaded, int total)
 {
-  fetch_context* context = (fetch_context*)fetch->userData;
+  fetch_context* context = (fetch_context*)_context;
   mrb_state *mrb = context->mrb;
   mrb_value self = context->archive;
-
-  int length = fetch->totalBytes==0 ? fetch->dataOffset + fetch->numBytes : fetch->totalBytes;
-  int transferred = fetch->totalBytes==0 ? fetch->dataOffset + fetch->numBytes : fetch->dataOffset;
 
   mrb_value callback = mrb_iv_get(mrb,self,mrb_intern_cstr(mrb,"@on_progress"));
   mrb_value argv[3] = {
     self,
-    mrb_fixnum_value(transferred),
-    mrb_fixnum_value(length)
+    mrb_fixnum_value(loaded),
+    mrb_fixnum_value(total)
   };
   if( mrb_symbol_p(callback) ){
     mrb_funcall_argv(mrb,self,mrb_symbol(callback),3,argv);
@@ -147,16 +143,16 @@ static void downloadProgress(struct emscripten_fetch_t *fetch)
   }
 }
 
-static void downloadFailed(struct emscripten_fetch_t *fetch)
+static void onerror(unsigned int handle, void *_context, int http_status_code, const char* desc)
 {
-  fetch_context* context = (fetch_context*)fetch->userData;
+  fetch_context* context = (fetch_context*)_context;
   mrb_state *mrb = context->mrb;
   mrb_value self = context->archive;
 
   mrb_value callback = mrb_iv_get(mrb,self,mrb_intern_cstr(mrb,"@callback"));
   mrb_value argv[2] = {
     self,
-    mrb_fixnum_value(fetch->status),
+    mrb_fixnum_value(http_status_code),
   };
   if( mrb_symbol_p(callback) ){
     mrb_funcall_argv(mrb,self,mrb_symbol(callback),2,argv);
@@ -165,7 +161,6 @@ static void downloadFailed(struct emscripten_fetch_t *fetch)
   }
 
   free(context);
-  emscripten_fetch_close(fetch);
 }
 
 static mrb_value mrb_archive_download(mrb_state *mrb, mrb_value self)
@@ -180,17 +175,9 @@ static mrb_value mrb_archive_download(mrb_state *mrb, mrb_value self)
   context->mrb = mrb;
   context->archive = self;
 
-  emscripten_fetch_attr_t attr;
-  emscripten_fetch_attr_init(&attr);
-  strcpy(attr.requestMethod, "GET");
-  attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
-  attr.onsuccess = downloadSucceeded;
-  attr.onprogress = downloadProgress;
-  attr.onerror = downloadFailed;
-  attr.userData = context;
-
   path = mrb_iv_get(mrb, self, mrb_intern_cstr(mrb,"@path") );
-  emscripten_fetch(&attr, mrb_string_value_cstr(mrb,&path) );
+
+  emscripten_async_wget2_data(mrb_string_value_cstr(mrb,&path),"GET","",context,TRUE,onload,onerror,onprogress);
 
   return self;
 }
