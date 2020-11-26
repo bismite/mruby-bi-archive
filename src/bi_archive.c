@@ -192,7 +192,7 @@ static mrb_value mrb_archive_texture(mrb_state *mrb, mrb_value self)
   mrb_archive* archive;
   mrb_get_args(mrb, "iib", &start,&length,&antialias);
   archive = DATA_PTR(self);
-  return create_bi_texture_from_buffer( mrb, archive->buffer+start, length, antialias );
+  return create_bi_texture_from_memory( mrb, archive->buffer+start, length, antialias );
 }
 
 static mrb_value mrb_archive_texture_decrypt(mrb_state *mrb, mrb_value self)
@@ -208,14 +208,8 @@ static mrb_value mrb_archive_texture_decrypt(mrb_state *mrb, mrb_value self)
   for(int i=0;i<length;i++){
     buf[i] = p[i] ^ secret;
   }
-
-  BiTexture texture;
-  bi_create_texture( buf, length, &texture, antialias );
-
-  mrb_value result = create_bi_texture( mrb, &texture );
-
+  mrb_value result = create_bi_texture_from_memory( mrb, buf, length, antialias );
   free(buf);
-
   return result;
 }
 
