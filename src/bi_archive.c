@@ -20,19 +20,6 @@
 // Bi::Archive
 //
 
-typedef struct {
-  void* buffer;
-  // mrb_state *mrb;
-  // mrb_value callback;
-} mrb_archive;
-
-void mrb_archive_free(mrb_state *mrb,void* p){
-  mrb_archive *archive = p;
-  mrb_free(mrb,archive->buffer);
-}
-
-static struct mrb_data_type const mrb_archive_data_type = { "Archive", mrb_archive_free };
-
 static mrb_value mrb_archive_initialize(mrb_state *mrb, mrb_value self)
 {
   mrb_value path;
@@ -43,28 +30,20 @@ static mrb_value mrb_archive_initialize(mrb_state *mrb, mrb_value self)
   mrb_iv_set(mrb, self, mrb_intern_cstr(mrb,"@secret"), mrb_fixnum_value(secret) );
   mrb_iv_set(mrb, self, mrb_intern_cstr(mrb,"@available"), mrb_false_value() );
   mrb_iv_set(mrb, self, mrb_intern_cstr(mrb,"@fallback"), mrb_bool_value(fallback) );
-  mrb_archive* archive = mrb_malloc(mrb,sizeof(mrb_archive));
-  DATA_PTR(self) = archive;
-  DATA_TYPE(self) = &mrb_archive_data_type;
   return self;
 }
 
 static void read_from_rwops(mrb_state *mrb, mrb_value self, SDL_RWops *io)
 {
-  mrb_archive* archive;
   uint32_t table_length;
   Sint64 filesize = SDL_RWsize(io);
-
-  archive = DATA_PTR(self);
 
   SDL_RWseek(io, 4, RW_SEEK_SET); // 32bit skip
   SDL_RWread(io,&table_length,4,1); // table size 32bit unsigned integer little endian
 
   char* buf = malloc(table_length);
   size_t table_loaded = SDL_RWread(io,buf,table_length,1);
-
   if(table_loaded!=1) {
-    // XXX: raise!
     mrb_raise(mrb, E_RUNTIME_ERROR, "table load error.");
   }
 
@@ -77,9 +56,9 @@ static void read_from_rwops(mrb_state *mrb, mrb_value self, SDL_RWops *io)
 
   size_t contents_size = filesize - 4 - 4 - table_length;
 
-  archive->buffer = mrb_malloc(mrb,contents_size);
-  size_t buffer_loaded = SDL_RWread(io, archive->buffer, contents_size, 1);
-
+  mrb_value buffer = mrb_str_new_capa(mrb,contents_size);
+  mrb_iv_set(mrb, self, mrb_intern_cstr(mrb,"@buffer"), buffer );
+  size_t buffer_loaded = SDL_RWread(io, RSTRING_PTR(buffer), contents_size, 1);
   if(buffer_loaded!=1) {
     // XXX: raise!
     mrb_raise(mrb, E_RUNTIME_ERROR, "buffer load error.");
@@ -189,25 +168,27 @@ static mrb_value mrb_archive_texture(mrb_state *mrb, mrb_value self)
 {
   mrb_int start,length;
   mrb_bool antialias;
-  mrb_archive* archive;
   mrb_get_args(mrb, "iib", &start,&length,&antialias);
-  archive = DATA_PTR(self);
-  return create_bi_texture_from_memory( mrb, archive->buffer+start, length, antialias );
+  mrb_value buffer = mrb_iv_get(mrb, self, mrb_intern_cstr(mrb,"@buffer") );
+  return create_bi_texture_from_memory( mrb, RSTRING_PTR(buffer)+start, length, antialias );
+}
+
+static char* read_decrypt(mrb_state *mrb,mrb_value self,mrb_int start,mrb_int length)
+{
+  mrb_value buffer = mrb_iv_get(mrb, self, mrb_intern_cstr(mrb,"@buffer") );
+  mrb_int secret = mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_cstr(mrb,"@secret")));
+  char *buf = malloc(length);
+  char *p = RSTRING_PTR(buffer)+start;
+  for(int i=0;i<length;i++){ buf[i] = p[i] ^ secret; }
+  return buf;
 }
 
 static mrb_value mrb_archive_texture_decrypt(mrb_state *mrb, mrb_value self)
 {
-  mrb_int secret,start,length;
+  mrb_int start,length;
   mrb_bool antialias;
-  mrb_archive* archive;
   mrb_get_args(mrb, "iib", &start,&length,&antialias);
-  archive = DATA_PTR(self);
-  secret = mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_cstr(mrb,"@secret")));
-  uint8_t *buf = malloc(length);
-  uint8_t *p = archive->buffer+start;
-  for(int i=0;i<length;i++){
-    buf[i] = p[i] ^ secret;
-  }
+  char *buf = read_decrypt(mrb,self,start,length);
   mrb_value result = create_bi_texture_from_memory( mrb, buf, length, antialias );
   free(buf);
   return result;
@@ -215,21 +196,11 @@ static mrb_value mrb_archive_texture_decrypt(mrb_state *mrb, mrb_value self)
 
 static mrb_value mrb_archive_read_decrypt(mrb_state *mrb, mrb_value self)
 {
-  mrb_int secret,start,length;
-  mrb_archive* archive;
+  mrb_int start,length;
   mrb_get_args(mrb, "ii", &start,&length);
-  archive = DATA_PTR(self);
-  secret = mrb_fixnum(mrb_iv_get(mrb, self, mrb_intern_cstr(mrb,"@secret")));
-  uint8_t *buf = malloc(length);
-  uint8_t *p = archive->buffer+start;
-  for(int i=0;i<length;i++){
-    buf[i] = p[i] ^ secret;
-  }
-
+  char *buf = read_decrypt(mrb,self,start,length);
   mrb_value result = mrb_str_new(mrb, buf, length);
-
   free(buf);
-
   return result;
 }
 
@@ -238,15 +209,8 @@ static mrb_value mrb_archive_read_decrypt(mrb_state *mrb, mrb_value self)
 
 void mrb_mruby_bi_archive_gem_init(mrb_state* mrb)
 {
-  struct RClass *bi;
-  bi = mrb_define_class(mrb, "Bi", mrb->object_class);
-  MRB_SET_INSTANCE_TT(bi, MRB_TT_DATA);
-
-
-  struct RClass *archive;
-
-  archive = mrb_define_class_under(mrb, bi, "Archive", mrb->object_class);
-  MRB_SET_INSTANCE_TT(archive, MRB_TT_DATA);
+  struct RClass *bi = mrb_class_get(mrb,"Bi");
+  struct RClass *archive = mrb_define_class_under(mrb, bi, "Archive", mrb->object_class);
 
   mrb_define_method(mrb, archive, "initialize", mrb_archive_initialize, MRB_ARGS_ANY() ); // path,secret,(fallback)
 
